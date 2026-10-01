@@ -2,6 +2,7 @@ import asyncio
 import re
 import json
 import os
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -687,6 +688,17 @@ async def matching_monitor(chat_id, page, context):
             else:
                 break
 
+async def dummy_web():
+    app = web.Application()
+    async def handler(request):
+        return web.Response(text="Bot is running!")
+    app.router.add_get("/", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -716,6 +728,35 @@ def main():
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(CommandHandler("users", users_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    async def post_init(application):
+        await dummy_web()
+
+    app.post_init = post_init
+
+    print(f"Bot running with Full UTR/OTP Flow (Owner: {OWNER_ID})...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
+
+            ASK_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_otp_input)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conv)],
+        allow_reentry=True
+    )
+
+    app.add_handler(add_acc_handler)
+    app.add_handler(utr_otp_handler)
+    app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
+    app.add_handler(CommandHandler("users", users_cmd))
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    async def post_init(application):
+        await dummy_web()
+
+    app.post_init = post_init
 
     print(f"Bot running with Full UTR/OTP Flow (Owner: {OWNER_ID})...")
     app.run_polling()
