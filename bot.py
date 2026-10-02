@@ -739,27 +739,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-            ASK_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_otp_input)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_conv)],
-        allow_reentry=True
-    )
-
-    app.add_handler(add_acc_handler)
-    app.add_handler(utr_otp_handler)
-    app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("stop", stop_cmd))
-    app.add_handler(CommandHandler("users", users_cmd))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    async def post_init(application):
-        await dummy_web()
-
-    app.post_init = post_init
-
-    print(f"Bot running with Full UTR/OTP Flow (Owner: {OWNER_ID})...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
