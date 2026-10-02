@@ -405,7 +405,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in user_sessions:
             await stop_user_session(chat_id, context)
 
-        await query.edit_message_text(f"⏳ **{phone}** session inject ho raha hai...\nOTP-UPI tab set kar rahe hain...")
+        await query.edit_message_text(f"⏳ **{phone}** session inject ho raha hai...\nBrowser start kiya ja raha hai...")
         asyncio.create_task(run_direct_session(chat_id, phone, session_data, context))
 
     elif data.startswith("pay_"):
@@ -505,7 +505,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id, f"❌ Error: {str(e)}")
 
 async def run_direct_session(chat_id, phone, session_data, context):
-    async with async_playwright() as p:
+    try:
+        p = await async_playwright().start()
         browser = await p.chromium.launch(
             headless=True,
             args=[
@@ -527,89 +528,104 @@ async def run_direct_session(chat_id, phone, session_data, context):
         )
 
         page = await context_browser.new_page()
+        page.set_default_timeout(15000)
 
         user_sessions[chat_id] = {
+            "playwright": p,
             "browser": browser,
             "page": page,
             "phone": phone,
             "running": True
         }
 
-        try:
-            await page.goto("https://arbpay.ai", wait_until="commit", timeout=60000)
-            await page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
+        await page.goto("https://arbpay.ai", wait_until="commit", timeout=45000)
+        await asyncio.sleep(2)
 
-            await page.evaluate("""
-                (storageMap) => {
-                    for (let k in storageMap) {
-                        const val = typeof storageMap[k] === 'object' ? JSON.stringify(storageMap[k]) : storageMap[k];
-                        localStorage.setItem(k, val);
-                    }
+        await page.evaluate("""
+            (storageMap) => {
+                for (let k in storageMap) {
+                    const val = typeof storageMap[k] === 'object' ? JSON.stringify(storageMap[k]) : storageMap[k];
+                    localStorage.setItem(k, val);
                 }
-            """, session_data)
+            }
+        """, session_data)
 
-            await page.reload(wait_until="domcontentloaded")
-            await asyncio.sleep(4)
+        await page.reload(wait_until="commit", timeout=30000)
+        await asyncio.sleep(3)
 
-            for _ in range(5):
-                close_btn = page.locator('button:has-text("Close"), div:has-text("Close"), button:has-text("Go buy")')
-                if await close_btn.count() > 0:
-                    try:
-                        await close_btn.first.click(force=True, timeout=1500)
-                        await asyncio.sleep(1)
-                    except Exception:
-                        pass
+        for _ in range(3):
+            close_btn = page.locator('button:has-text("Close"), div:has-text("Close"), button:has-text("Go buy")')
+            if await close_btn.count() > 0:
+                try:
+                    await close_btn.first.click(force=True, timeout=1500)
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass
 
-            buy_arb = page.locator('text="Buy ARB"').first
-            if await buy_arb.count() > 0:
-                await buy_arb.click(force=True, timeout=2000)
-                await asyncio.sleep(3)
+        buy_arb = page.locator('text="Buy ARB"').first
+        if await buy_arb.count() > 0:
+            try:
+                await buy_arb.click(force=True, timeout=3000)
+            except Exception:
+                pass
+        await asyncio.sleep(2)
 
-            curr_body = await page.inner_text("body")
-            if "Cancel Matching" in curr_body:
-                c_btn = page.locator('text="Cancel Matching"')
-                if await c_btn.count() > 0:
-                    await c_btn.first.click(force=True, timeout=2000)
-                    await asyncio.sleep(1.5)
+        curr_body = await page.inner_text("body")
+        if "Cancel Matching" in curr_body:
+            c_btn = page.locator('text="Cancel Matching"')
+            if await c_btn.count() > 0:
+                await c_btn.first.click(force=True, timeout=2000)
+                await asyncio.sleep(1.5)
 
-            curr_body = await page.inner_text("body")
-            if "Back to Order List" in curr_body:
-                back_btn = page.locator('text="Back to Order List"')
-                if await back_btn.count() > 0:
-                    await back_btn.first.click(force=True, timeout=2000)
-                    await asyncio.sleep(2)
+        curr_body = await page.inner_text("body")
+        if "Back to Order List" in curr_body:
+            back_btn = page.locator('text="Back to Order List"')
+            if await back_btn.count() > 0:
+                await back_btn.first.click(force=True, timeout=2000)
+                await asyncio.sleep(2)
 
-            otp_tab = page.locator('text="OTP-UPI"').first
-            if await otp_tab.count() > 0:
+        otp_tab = page.locator('text="OTP-UPI"').first
+        if await otp_tab.count() > 0:
+            try:
                 box = await otp_tab.bounding_box()
                 if box:
                     await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
                 else:
                     await otp_tab.click(force=True, timeout=2000)
-            await asyncio.sleep(2)
-
-            buttons = [
-                [InlineKeyboardButton("Paytm", callback_data="pay_Paytm"), InlineKeyboardButton("PhonePe", callback_data="pay_PhonePe")],
-                [InlineKeyboardButton("⛔ Cancel / Stop", callback_data="stop_task")]
-            ]
-            await context.bot.send_message(
-                chat_id,
-                f"✅ **{phone} Ready!** (Order List Loaded)\n\nKis payment app se matching start karni hai?",
-                reply_markup=InlineKeyboardMarkup(buttons),
-                parse_mode="Markdown"
-            )
-
-            while chat_id in user_sessions and user_sessions[chat_id]["running"]:
-                await asyncio.sleep(1)
-
-        except Exception as e:
-            if chat_id in user_sessions and user_sessions[chat_id]["running"]:
-                await context.bot.send_message(chat_id, f"❌ Session Error: {str(e)}")
-            try:
-                await browser.close()
             except Exception:
                 pass
+        await asyncio.sleep(2)
+
+        buttons = [
+            [InlineKeyboardButton("Paytm", callback_data="pay_Paytm"), InlineKeyboardButton("PhonePe", callback_data="pay_PhonePe")],
+            [InlineKeyboardButton("⛔ Cancel / Stop", callback_data="stop_task")]
+        ]
+        
+        status_shot = await page.screenshot()
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=status_shot,
+            caption=f"✅ **{phone} Ready!** (Order List Loaded)\n\nKis payment app se matching start karni hai?",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
+        )
+
+        while chat_id in user_sessions and user_sessions[chat_id]["running"]:
+            await asyncio.sleep(1)
+
+    except Exception as e:
+        if chat_id in user_sessions and user_sessions[chat_id]["running"]:
+            try:
+                err_pic = await user_sessions[chat_id]["page"].screenshot()
+                await context.bot.send_photo(chat_id, photo=err_pic, caption=f"⚠️ Screen status check:\nError: {str(e)}")
+            except Exception:
+                await context.bot.send_message(chat_id, f"❌ Session Error: {str(e)}")
+        try:
+            if chat_id in user_sessions:
+                await user_sessions[chat_id]["browser"].close()
+                await user_sessions[chat_id]["playwright"].stop()
+        except Exception:
+            pass
 
 async def matching_monitor(chat_id, page, context):
     round_count = 2
